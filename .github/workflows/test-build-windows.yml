@@ -39,7 +39,62 @@ jobs:
         Invoke-WebRequest -URI https://raw.githubusercontent.com/NovaRain/DXSDK_Collection/master/DXSDK_Aug2007/Include/d3d8.h -OutFile include/d3d8.h
         Invoke-WebRequest -URI https://raw.githubusercontent.com/NovaRain/DXSDK_Collection/master/DXSDK_Aug2007/Include/d3d8types.h -OutFile include/d3d8types.h
         Invoke-WebRequest -URI https://raw.githubusercontent.com/NovaRain/DXSDK_Collection/master/DXSDK_Aug2007/Include/d3d8caps.h -OutFile include/d3d8caps.h
-        
+
+    - name: Apply patches
+      shell: python
+      run: |
+        import os, re
+
+        def patch(path, patches):
+            if not os.path.exists(path):
+                return
+            with open(path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            original = content
+            for old, new in patches:
+                content = content.replace(old, new, 1)
+            if content != original:
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+
+        patch('src/d3d11/d3d11_features.cpp', [
+            ('     || !features.core.features.multiDrawIndirect\n', ''),
+        ])
+
+        caps_path = 'src/dxvk/dxvk_capabilities.cpp'
+        if os.path.exists(caps_path):
+            with open(caps_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            content = re.sub(r'(checkRequired\s*\([^)]*maintenance5[^)]*\))', r'// \1', content)
+            content = re.sub(r'(checkRequired\s*\([^)]*maintenance6[^)]*\))', r'// \1', content)
+            content = re.sub(r'(checkRequired\s*\([^)]*robustness2[^)]*\))', r'// \1', content)
+            content = re.sub(r'(checkRequired\s*\([^)]*load_store_op_none[^)]*\))', r'// \1', content)
+            with open(caps_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+        ctx_path = 'src/dxvk/dxvk_context.cpp'
+        if os.path.exists(ctx_path):
+            with open(ctx_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            helper = '''
+static inline void emulateDrawIndirect(
+    DxvkCmdList* cmd,
+    VkBuffer buffer, VkDeviceSize offset,
+    uint32_t count, uint32_t stride,
+    bool indexed) {
+  for (uint32_t i = 0; i < count; i++) {
+    if (indexed)
+      cmd->cmdDrawIndexedIndirect(buffer, offset + i * stride, 1, stride);
+    else
+      cmd->cmdDrawIndirect(buffer, offset + i * stride, 1, stride);
+  }
+}
+'''
+            if '#include "dxvk_context.h"' in content:
+                content = content.replace('#include "dxvk_context.h"', '#include "dxvk_context.h"\n' + helper)
+            with open(ctx_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+
     - name: Get version
       id: get-version
       shell: bash
